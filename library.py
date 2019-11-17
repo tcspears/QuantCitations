@@ -53,23 +53,30 @@ class DataCache:
     def __init__(self, cache_location, wait_time=2):
         self.cache_location = cache_location
         self.wait_time = wait_time
-        self.repec_list = glob.glob(cache_location + "repec/" + "*")
-        self.citec_list = glob.glob(cache_location + "citec/" + "*")
+        self.repec_list = glob.glob(cache_location + "repec" + "/*/*")
+        self.citec_list = glob.glob(cache_location + "citec" + "/*/*")
 
     def _build_handle_from_filename(self, filename):
         return filename.replace("_", "/").split(".")[0]
 
     def request_repec(self, handle):
         def build_file_path(filename):
-            return self.cache_location + "repec/" + filename
+            return build_file_directory(filename) + filename
+
+        def build_file_directory(filename):
+            filename_components = filename.split(":")
+            return self.cache_location + "repec/" + filename_components[1] + "/"
 
         corresp_file = handle.replace("/", "_") + ".html"
+        corresp_dir = build_file_directory(corresp_file)
 
         if build_file_path(corresp_file) in self.repec_list:
             file = codecs.open(build_file_path(corresp_file), 'r')
             return file.read()
         else:
             request = requests.get("https://ideas.repec.org/cgi-bin/h.cgi?h=" + handle)
+            if not os.path.exists(corresp_dir):
+                os.makedirs(corresp_dir)
             file = open(build_file_path(corresp_file), 'w')
             file.write(request.text)
             file.close()
@@ -79,15 +86,22 @@ class DataCache:
 
     def request_citec(self, handle):
         def build_file_path(filename):
-            return self.cache_location + "citec/" + filename
+            return build_file_directory(filename) + filename
+
+        def build_file_directory(filename):
+            filename_components = filename.split(":")
+            return self.cache_location + "citec/" + filename_components[1] + "/"
 
         corresp_file = handle.replace("/", "_") + ".xml"
+        corresp_dir = build_file_directory(corresp_file)
 
         if build_file_path(corresp_file) in self.citec_list:
             file = codecs.open(build_file_path(corresp_file), 'r')
             return file.read()
         else:
             request = requests.get("http://citec.repec.org/api/citedby/" + handle + "/" + settings.CITEC_USERNAME)
+            if not os.path.exists(corresp_dir):
+                os.makedirs(corresp_dir)
             file = open(build_file_path(corresp_file), 'w')
             file.write(request.text)
             file.close()
@@ -224,7 +238,7 @@ def spidering_algorithm(db_conn,
     link_count = 0
 
     # Spider through the queue
-    while not repec_queue.empty() and link_count < max_links:
+    while not repec_queue.empty():
         current = repec_queue.get()
 
         if current not in visited_handles:
@@ -234,16 +248,20 @@ def spidering_algorithm(db_conn,
                 print("Getting RePEC data for " + current)
                 article = get_repec_data(cache, current)
 
-                # Get citec cites and add them to the queue
-                print("Getting cites for " + current)
-                cites = get_citec_cites(cache, current)
-                for handle in cites:
-                    repec_queue.put(handle)
+                if link_count < max_links:
+                    # If we are below max_links, then get citec cites and add them to the queue
+                    print("Getting cites for " + current)
+                    cites = get_citec_cites(cache, current)
+                    for handle in cites:
+                        repec_queue.put(handle)
+                        link_count += 1
+                else:
+                    print("No room left in queue; skipping cites for " + current)
+                    cites = []
 
                 article_sql = construct_insertion_sql(article, cites, articles_table, citations_table)
                 db_conn.sql_put(article_sql)
                 print("Adding " + current + " to database")
-                link_count += 1
 
                 # Once appended, add current handle to list of visited handles
                 visited_handles.append(current)
