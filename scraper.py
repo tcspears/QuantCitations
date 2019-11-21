@@ -123,7 +123,7 @@ def repec_scraper(db_session,
                         # e.g., [1,2] -> [1,2,3].
                         to_put = ArticleInfo(handle, current.citation_chain + [article_counter])
                         repec_queue.put(to_put)
-                        print("link count : " + str(link_count))
+                        logging.info("Current value of link_count : " + str(link_count))
                         link_count += 1
                         if link_count > max_links:
                             break
@@ -158,6 +158,7 @@ def repec_scraper(db_session,
         # citation chain to the citations table but will skip adding the article. To do this, we need
         # to query the database to get the id of the article itself
         elif len(current.citation_chain) == 0:
+            logging.info("Article " + current.handle + " already exists. Adding an additional citation chain.")
             article_id = db_session.query(db.Article).filter_by(handle=current.handle).scalar().id
             logging.info("Adding citation chain for " + current.handle + " to database")
             cite_chain = db.CitationChain(id_of_citing=article_id,
