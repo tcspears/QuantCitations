@@ -180,7 +180,7 @@ def spidering_algorithm(db_session,
                     cites = get_citec_cites(cache, current.handle)
                     for handle in cites:
                         # Second part takes current citation chain and appends current link counter onto it:
-                        # e.g., [1,2] -> [1,2,3]. Slicing used because we need to actually copy the list
+                        # e.g., [1,2] -> [1,2,3].
                         to_put = article_info(handle, current.citation_chain + [article_counter])
                         repec_queue.put(to_put)
                         print("link count : " + str(link_count))
