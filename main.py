@@ -1,14 +1,16 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
+import cache
 import db
-import library
+import scraper
 
 engine = create_engine('postgresql://taylor:FurisJex22@localhost/quantcites', echo=False)
 db.Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 session = Session()
 
-cache = library.DataCache("/Users/taylor/QuantCitesDataCache/", wait_time=2)
+cache = cache.DataCache("/Users/taylor/QuantCitesDataCache/", wait_time=2)
 
 seed_papers = {"cir":"RePEc:ecm:emetrp:v:53:y:1985:i:2:p:385-407",
                "holee":"RePEc:bla:jfinan:v:41:y:1986:i:5:p:1011-29",
@@ -29,10 +31,10 @@ seed_papers = {"cir":"RePEc:ecm:emetrp:v:53:y:1985:i:2:p:385-407",
 
 seed_handles = list(seed_papers.values())
 
-library.spidering_algorithm(db_session=session,
-                            cache=cache,
-                            seed_handles=seed_handles,
-                            max_links=100000)
+scraper.repec_scraper(db_session=session,
+                      cache=cache,
+                      seed_handles=seed_handles,
+                      max_links=100000)
 
 
 

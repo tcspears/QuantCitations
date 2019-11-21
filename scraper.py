@@ -1,87 +1,25 @@
-import codecs
-import glob
 import json
 import queue
-import time
 from collections import namedtuple
 import dateparser
-import requests
 from bs4 import BeautifulSoup
-import os
-
+import logging
 from sqlalchemy_utils import Ltree
 
 import db
 import settings
 
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(message)s',
+                    datefmt='%d-%b-%y %H:%M:%S',
+                    handlers=[
+                        logging.FileHandler("{0}/{1}.log".format(settings.LOG_PATH, settings.LOG_FILE)),
+                        logging.StreamHandler()
+                    ])
+
 
 class NoDataException(Exception):
     pass
-
-
-class DataCache:
-    def __init__(self, cache_location, wait_time=2):
-        self.cache_location = cache_location
-        self.wait_time = wait_time
-        self.repec_list = glob.glob(cache_location + "repec" + "/*/*")
-        self.citec_list = glob.glob(cache_location + "citec" + "/*/*")
-
-    def _build_handle_from_filename(self, filename):
-        return filename.replace("_", "/").split(".")[0]
-
-    def request_repec(self, handle):
-        def build_file_path(filename):
-            return build_file_directory(filename) + filename
-
-        def build_file_directory(filename):
-            filename_components = filename.split(":")
-            return self.cache_location + "repec/" + filename_components[1] + "/"
-
-        corresp_file = handle.replace("/", "_") + ".html"
-        corresp_dir = build_file_directory(corresp_file)
-
-        if build_file_path(corresp_file) in self.repec_list:
-            file = codecs.open(build_file_path(corresp_file), 'r')
-            return file.read()
-        else:
-            request = requests.get("https://ideas.repec.org/cgi-bin/h.cgi?h=" + handle)
-            if not os.path.exists(corresp_dir):
-                os.makedirs(corresp_dir)
-            file = open(build_file_path(corresp_file), 'w')
-            file.write(request.text)
-            file.close()
-            self.repec_list.append(corresp_file)
-            time.sleep(self.wait_time)
-            return request.text
-
-    def request_citec(self, handle):
-        def build_file_path(filename):
-            return build_file_directory(filename) + filename
-
-        def build_file_directory(filename):
-            filename_components = filename.split(":")
-            return self.cache_location + "citec/" + filename_components[1] + "/"
-
-        corresp_file = handle.replace("/", "_") + ".xml"
-        corresp_dir = build_file_directory(corresp_file)
-
-        if build_file_path(corresp_file) in self.citec_list:
-            file = codecs.open(build_file_path(corresp_file), 'r')
-            return file.read()
-        else:
-            request = requests.get("http://citec.repec.org/api/citedby/" + handle + "/" + settings.CITEC_USERNAME)
-            if not os.path.exists(corresp_dir):
-                os.makedirs(corresp_dir)
-            file = open(build_file_path(corresp_file), 'w')
-            file.write(request.text)
-            file.close()
-            self.citec_list.append(corresp_file)
-            time.sleep(self.wait_time)
-            return request.text
-
-
-# Defines named tuple Article for storing article data
-Article = namedtuple('Article', 'handle title pub_year pub_venue authors abstract url keywords')
 
 
 def get_repec_data(cache, repec_handle):
@@ -135,19 +73,21 @@ def get_citec_cites(cache, repec_handle):
     return repec_handles
 
 
+# Define a namedtuple that will keep track of elements in queue. This consists of a RePec handle
+# and an int list defining a citation path to that handle (e.g. [1,10,12] for article with id=12.
+
+ArticleInfo = namedtuple("ArticleInfo", "handle citation_chain")
+
+
 # Spiders RePEC and Citec from a list of seed papers
-def spidering_algorithm(db_session,
-                        cache,
-                        seed_handles,
-                        max_links=100):
+def repec_scraper(db_session,
+                  cache,
+                  seed_handles,
+                  max_links=100):
 
     def build_ltree(citation_list):
         return ".".join(list(map(str, citation_list)))
 
-    # Define a namedtuple that will keep track of elements in queue. This consists of a RePec handle
-    # and a list defining a citation path to that handle. The seed handles will just use an empty list
-    # for the citation path.
-    article_info = namedtuple("articleinfo", "handle citation_chain")
 
     # Initialize Queue object to store RePEC handles; fill it with seed handles.
     repec_queue = queue.Queue()
@@ -155,7 +95,7 @@ def spidering_algorithm(db_session,
 
     for handle in seed_handles:
         # Because these articles are at the 'root' of the citation chain, the chain list is empty
-        repec_queue.put(article_info(handle, []))
+        repec_queue.put(ArticleInfo(handle, []))
 
     # Initiate counter for article entries and link count
     article_counter = 1
@@ -170,31 +110,31 @@ def spidering_algorithm(db_session,
 
             try:
                 # Download RePEC data and add current counter value as article ID
-                print("Getting RePEC data for " + current.handle)
+                logging.info("Getting RePEC data for " + current.handle)
                 article = get_repec_data(cache, current.handle)
                 article.id = article_counter
 
                 if link_count < max_links:
                     # If we are below max_links, then get citec cites and add them to the queue
-                    print("Getting cites for " + current.handle)
+                    logging.info("Getting cites for " + current.handle)
                     cites = get_citec_cites(cache, current.handle)
                     for handle in cites:
                         # Second part takes current citation chain and appends current link counter onto it:
                         # e.g., [1,2] -> [1,2,3].
-                        to_put = article_info(handle, current.citation_chain + [article_counter])
+                        to_put = ArticleInfo(handle, current.citation_chain + [article_counter])
                         repec_queue.put(to_put)
                         print("link count : " + str(link_count))
                         link_count += 1
                         if link_count > max_links:
                             break
                 else:
-                    print("No room left in queue; skipping cites for " + current.handle)
+                    logging.info("No room left in queue; skipping cites for " + current.handle)
 
-                print("Adding " + current.handle + " to database")
+                logging.info("Adding " + current.handle + " to database")
                 db_session.add(article)
 
                 if not len(current.citation_chain) == 0:
-                    print("Adding citation chain for " + current.handle + " to database")
+                    logging.info("Adding citation chain for " + current.handle + " to database")
                     cite_chain = db.CitationChain(id_of_citing=article_counter,
                                                   citation_chain=Ltree(build_ltree(current.citation_chain + [article_counter])))
                     db_session.add(cite_chain)
@@ -206,19 +146,20 @@ def spidering_algorithm(db_session,
                 article_counter += 1
 
             except AttributeError:
-                print("No RePeC data for " + current.handle)
+                logging.warning("No RePeC data for " + current.handle)
 
             except json.decoder.JSONDecodeError:
-                print("Problem decoding JSON for " + current.handle + ". Skipping this one.")
+                logging.error("Problem decoding JSON for " + current.handle + ". Skipping this one.")
 
             except NoDataException:
-                print("Data missing for " + current.handle)
+                logging.warning("Data missing for " + current.handle)
 
         # If the handle is already in the list of visited handles, then we need to add the current
         # citation chain to the citations table but will skip adding the article. To do this, we need
         # to query the database to get the id of the article itself
         elif len(current.citation_chain) == 0:
             article_id = db_session.query(db.Article).filter_by(handle=current.handle).scalar().id
+            logging.info("Adding citation chain for " + current.handle + " to database")
             cite_chain = db.CitationChain(id_of_citing=article_id,
                                           citation_chain=Ltree(build_ltree(current.citation_chain + [article_counter])))
             db_session.add(cite_chain)
