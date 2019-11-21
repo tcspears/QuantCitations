@@ -5,48 +5,18 @@ import queue
 import time
 from collections import namedtuple
 import dateparser
-import psycopg2 as ps
 import requests
 from bs4 import BeautifulSoup
+import os
 
+from sqlalchemy_utils import Ltree
+
+import db
 import settings
 
 
 class NoDataException(Exception):
     pass
-
-
-class DBConnection:
-    def __init__(self, **kwargs):
-        self.connection = ps.connect(**kwargs)
-
-    # Takes a SELECT SQL query and executes it
-    def sql_fetch(self, sql_statement):
-        contains_select_keyword = "select" in sql_statement.lower()
-        if not contains_select_keyword:
-            raise Exception("SQL query isn't a SELECT query")
-        cursor = self.connection.cursor()
-        cursor.execute(sql_statement)
-        return cursor.fetchall()
-
-    # Takes one or more INSERT SQL queries and executes them
-    def sql_put(self, sql_statements):
-        if not isinstance(sql_statements, list):
-            sql_statements = [sql_statements]
-
-        contains_insert_keyword = all({"insert" in statement.lower() for statement in sql_statements})
-        if not contains_insert_keyword:
-            raise Exception("SQL query isn't an INSERT query")
-
-        cursor = self.connection.cursor()
-        for statement in sql_statements:
-            cursor.execute(statement)
-        self.connection.commit()
-
-    def get_all_handles(self, articles_table="articles"):
-        sql_output = self.sql_fetch("SELECT handle FROM " + articles_table)
-        return [i[0] for i in sql_output]
-
 
 
 class DataCache:
@@ -123,30 +93,23 @@ def get_repec_data(cache, repec_handle):
     json_text = article_json["@graph"]
 
     # Search through JSON object and find the relevant information
-    items = dict()
+    article = db.Article()
+    article.handle = repec_handle
 
     for key in json_text:
         for inner_key in key:
             if inner_key == '@id' and key[inner_key] == "#periodical":
-                items['pub_venue'] = key['name'].strip()
+                article.pub_venue = key['name'].strip()
             elif inner_key == '@id' and key[inner_key] == '#number':
-                items['pub_year'] = dateparser.parse(key['datePublished']).year
+                article.pub_year = dateparser.parse(key['datePublished']).year
             elif inner_key == '@id' and key[inner_key] == '#article':
-                items['title'] = key['name'].strip()
-                items['authors'] = [author.strip() for author in key['author'].split('&')]
-                items['url'] = key['url'].strip()
-                items['abstract'] = key['description'].strip()
-                items['keywords'] = [keyword.strip() for keyword in key['keywords'].split(';')]
+                article.title = key['name'].strip()
+                article.authors = [author.strip() for author in key['author'].split('&')]
+                article.url = key['url'].strip()
+                article.abstract = key['description'].strip()
+                article.keywords = [keyword.strip() for keyword in key['keywords'].split(';')]
 
-    article = Article(handle=repec_handle,
-                      title=items['title'],
-                      pub_year=items['pub_year'],
-                      pub_venue=items['pub_venue'],
-                      authors=items['authors'],
-                      abstract=items['abstract'],
-                      url=items['url'],
-                      keywords=items['keywords'])
-    return (article)
+    return article
 
 
 # Given a repec_handle, returns a
@@ -172,107 +135,93 @@ def get_citec_cites(cache, repec_handle):
     return repec_handles
 
 
-# Converts an article object into a SQL statement to insert that article into the database
-def construct_insertion_sql(article, cites, articles_table="articles", citations_table="citations"):
-    def sanitize_string(input_string):
-        return (input_string.replace("'", "''"))
-
-    def construct_array_portion(input_list):
-        if len(input_list) == 0:
-            return ("'{}'")
-        else:
-            output = "'{"
-            for element in input_list[:-1]:
-                output = output + "\"" + sanitize_string(element) + "\", "
-            output = output + "\"" + sanitize_string(input_list[-1]) + "\"}'"
-            return output
-
-    def construct_citing_sql(citing_handle, cited_handle, citations_table):
-        cit_prefix = "INSERT INTO " + citations_table + " (citing_handle, cited_handle) VALUES ("
-        citing_handle = "'" + citing_handle + "', "
-        cited_handle = "'" + cited_handle + "'"
-        cit_suffix = ")"
-        cit_sql = cit_prefix + citing_handle + cited_handle + cit_suffix
-        return (cit_sql)
-
-    # Build article insertion SQL. Results in one SQL statement.
-    art_prefix = "INSERT INTO " + articles_table + " (handle, title, pub_year, pub_venue, authors, abstract, url, keywords) VALUES ("
-    handle = "'" + article.handle + "', "
-    title = "'" + sanitize_string(article.title) + "', "
-    pub_year = str(article.pub_year) + ", "
-    pub_venue = "'" + sanitize_string(article.pub_venue) + "', "
-    authors = construct_array_portion(article.authors) + ", "
-    abstract = "'" + sanitize_string(article.abstract) + "', "
-    url = "'" + article.url + "', "
-    keywords = construct_array_portion(article.keywords)
-    art_suffix = ")"
-    article_sql = art_prefix + handle + title + pub_year + pub_venue + authors + abstract + url + keywords + art_suffix
-
-    # Build citation SQL
-    citation_sql = [construct_citing_sql(citing_handle=element,
-                                         cited_handle=article.handle,
-                                         citations_table=citations_table) for element in cites]
-
-    sql_output = list()
-    sql_output.append(article_sql)
-    sql_output.extend(citation_sql)
-
-    return sql_output
-
-
 # Spiders RePEC and Citec from a list of seed papers
-def spidering_algorithm(db_conn,
+def spidering_algorithm(db_session,
                         cache,
                         seed_handles,
-                        articles_table="articles",
-                        citations_table="citations",
-                        max_links=100,
-                        wait_time=2):
-    # Initialize Queue object to store RePEC handles; fill it with seed handles
+                        max_links=100):
+
+    def build_ltree(citation_list):
+        return ".".join(list(map(str, citation_list)))
+
+    # Define a namedtuple that will keep track of elements in queue. This consists of a RePec handle
+    # and a list defining a citation path to that handle. The seed handles will just use an empty list
+    # for the citation path.
+    article_info = namedtuple("articleinfo", "handle citation_chain")
+
+    # Initialize Queue object to store RePEC handles; fill it with seed handles.
     repec_queue = queue.Queue()
     visited_handles = list()
 
     for handle in seed_handles:
-        repec_queue.put(handle)
+        # Because these articles are at the 'root' of the citation chain, the chain list is empty
+        repec_queue.put(article_info(handle, []))
 
+    # Initiate counter for article entries and link count
+    article_counter = 1
     link_count = 0
 
     # Spider through the queue
     while not repec_queue.empty():
+
         current = repec_queue.get()
 
-        if current not in visited_handles:
+        if current.handle not in visited_handles:
 
             try:
-                # Download RePEC data and add it to the database
-                print("Getting RePEC data for " + current)
-                article = get_repec_data(cache, current)
+                # Download RePEC data and add current counter value as article ID
+                print("Getting RePEC data for " + current.handle)
+                article = get_repec_data(cache, current.handle)
+                article.id = article_counter
 
                 if link_count < max_links:
                     # If we are below max_links, then get citec cites and add them to the queue
-                    print("Getting cites for " + current)
-                    cites = get_citec_cites(cache, current)
+                    print("Getting cites for " + current.handle)
+                    cites = get_citec_cites(cache, current.handle)
                     for handle in cites:
-                        repec_queue.put(handle)
+                        # Second part takes current citation chain and appends current link counter onto it:
+                        # e.g., [1,2] -> [1,2,3]. Slicing used because we need to actually copy the list
+                        to_put = article_info(handle, current.citation_chain + [article_counter])
+                        repec_queue.put(to_put)
+                        print("link count : " + str(link_count))
                         link_count += 1
+                        if link_count > max_links:
+                            break
                 else:
-                    print("No room left in queue; skipping cites for " + current)
-                    cites = []
+                    print("No room left in queue; skipping cites for " + current.handle)
 
-                article_sql = construct_insertion_sql(article, cites, articles_table, citations_table)
-                db_conn.sql_put(article_sql)
-                print("Adding " + current + " to database")
+                print("Adding " + current.handle + " to database")
+                db_session.add(article)
+
+                if not len(current.citation_chain) == 0:
+                    print("Adding citation chain for " + current.handle + " to database")
+                    cite_chain = db.CitationChain(id_of_citing=article_counter,
+                                                  citation_chain=Ltree(build_ltree(current.citation_chain + [article_counter])))
+                    db_session.add(cite_chain)
+
+                db_session.commit()
 
                 # Once appended, add current handle to list of visited handles
-                visited_handles.append(current)
+                visited_handles.append(current.handle)
+                article_counter += 1
 
             except AttributeError:
-                print("No RePeC data for " + current)
+                print("No RePeC data for " + current.handle)
 
             except json.decoder.JSONDecodeError:
-                print("Problem decoding JSON for " + current + ". Skipping this one.")
+                print("Problem decoding JSON for " + current.handle + ". Skipping this one.")
 
             except NoDataException:
-                print("Data missing for " + current)
+                print("Data missing for " + current.handle)
+
+        # If the handle is already in the list of visited handles, then we need to add the current
+        # citation chain to the citations table but will skip adding the article. To do this, we need
+        # to query the database to get the id of the article itself
+        elif len(current.citation_chain) == 0:
+            article_id = db_session.query(db.Article).filter_by(handle=current.handle).scalar().id
+            cite_chain = db.CitationChain(id_of_citing=article_id,
+                                          citation_chain=Ltree(build_ltree(current.citation_chain + [article_counter])))
+            db_session.add(cite_chain)
+            db_session.commit()
 
 

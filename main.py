@@ -1,9 +1,15 @@
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+import db
 import library
 
-cache = library.DataCache("/Users/taylor/QuantCitesDataCache/", wait_time=2)
-conn = library.DBConnection(dbname="quantcites", user="taylor", password="FurisJex22", host="127.0.0.1", port="5432")
+engine = create_engine('postgresql://taylor:FurisJex22@localhost/quantcites', echo=False)
+db.Base.metadata.create_all(engine)
+Session = sessionmaker(bind=engine)
+session = Session()
 
-# Run spidering algorithm
+cache = library.DataCache("/Users/taylor/QuantCitesDataCache/", wait_time=2)
+
 seed_papers = {"cir":"RePEc:ecm:emetrp:v:53:y:1985:i:2:p:385-407",
                "holee":"RePEc:bla:jfinan:v:41:y:1986:i:5:p:1011-29",
                "vasicek":"RePEc:eee:jfinec:v:5:y:1977:i:2:p:177-188",
@@ -23,9 +29,14 @@ seed_papers = {"cir":"RePEc:ecm:emetrp:v:53:y:1985:i:2:p:385-407",
 
 seed_handles = list(seed_papers.values())
 
-library.spidering_algorithm(db_conn=conn,
+library.spidering_algorithm(db_session=session,
                             cache=cache,
                             seed_handles=seed_handles,
-                            articles_table="articles",
-                            citations_table="citations",
-                            max_links=50000)
+                            max_links=100000)
+
+
+
+
+
+
+
