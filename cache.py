@@ -31,7 +31,8 @@ class DataCache:
             file = codecs.open(build_file_path(corresp_file), 'r')
             return file.read()
         else:
-            request = requests.get("https://ideas.repec.org/cgi-bin/h.cgi?h=" + handle)
+            request = requests.get("https://ideas.repec.org/cgi-bin/h.cgi?h=" + handle,
+                                   timeout=settings.WAIT_BEFORE_TIMEOUT)
             if not os.path.exists(corresp_dir):
                 os.makedirs(corresp_dir)
             file = open(build_file_path(corresp_file), 'w')
@@ -56,7 +57,8 @@ class DataCache:
             file = codecs.open(build_file_path(corresp_file), 'r')
             return file.read()
         else:
-            request = requests.get("http://citec.repec.org/api/citedby/" + handle + "/" + settings.CITEC_USERNAME)
+            request = requests.get("http://citec.repec.org/api/citedby/" + handle + "/" + settings.CITEC_USERNAME,
+                                   timeout=settings.WAIT_BEFORE_TIMEOUT)
             if not os.path.exists(corresp_dir):
                 os.makedirs(corresp_dir)
             file = open(build_file_path(corresp_file), 'w')
