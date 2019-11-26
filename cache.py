@@ -4,12 +4,38 @@ import os
 import time
 import requests
 import settings
-
+import datetime
 
 class DataCache:
-    def __init__(self, cache_location, wait_time=2):
+    last_repec_request_time = datetime.datetime.now()
+    last_citec_request_time = datetime.datetime.now()
+
+    @classmethod
+    def reset_citec_wait_time(cls):
+        cls.last_citec_request_time = datetime.datetime.now()
+
+    @classmethod
+    def reset_repec_wait_time(cls):
+        cls.last_repec_request_time = datetime.datetime.now()
+
+    @classmethod
+    def get_repec_wait_time(cls):
+        current = datetime.datetime.now()
+        diff = current - cls.last_repec_request_time
+        return max(settings.REPEC_WAIT_BETWEEN_REQUESTS - diff.seconds, 0)
+
+    @classmethod
+    def get_citec_wait_time(cls):
+        current = datetime.datetime.now()
+        diff = current - cls.last_citec_request_time
+        return max(settings.CITEC_WAIT_BETWEEN_REQUESTS - diff.seconds, 0)
+
+    def __init__(self, cache_location=settings.CACHE_LOCATION):
+        # append final '/' if not included in path
+        if not cache_location.endswith("/"):
+            cache_location = cache_location + "/"
+
         self.cache_location = cache_location
-        self.wait_time = wait_time
         self.repec_list = glob.glob(cache_location + "repec" + "/*/*")
         self.citec_list = glob.glob(cache_location + "citec" + "/*/*")
 
@@ -31,15 +57,17 @@ class DataCache:
             file = codecs.open(build_file_path(corresp_file), 'r')
             return file.read()
         else:
+            time.sleep(DataCache.get_repec_wait_time())
             request = requests.get("https://ideas.repec.org/cgi-bin/h.cgi?h=" + handle,
-                                   timeout=settings.WAIT_BEFORE_TIMEOUT)
+                                   timeout=settings.WAIT_BEFORE_TIMEOUT,
+                                   headers=settings.HEADERS)
+            DataCache.reset_repec_wait_time()
             if not os.path.exists(corresp_dir):
                 os.makedirs(corresp_dir)
             file = open(build_file_path(corresp_file), 'w')
             file.write(request.text)
             file.close()
             self.repec_list.append(corresp_file)
-            time.sleep(self.wait_time)
             return request.text
 
     def request_citec(self, handle):
@@ -57,13 +85,15 @@ class DataCache:
             file = codecs.open(build_file_path(corresp_file), 'r')
             return file.read()
         else:
+            time.sleep(DataCache.get_citec_wait_time())
             request = requests.get("http://citec.repec.org/api/citedby/" + handle + "/" + settings.CITEC_USERNAME,
-                                   timeout=settings.WAIT_BEFORE_TIMEOUT)
+                                   timeout=settings.WAIT_BEFORE_TIMEOUT,
+                                   headers=settings.HEADERS)
+            DataCache.reset_citec_wait_time()
             if not os.path.exists(corresp_dir):
                 os.makedirs(corresp_dir)
             file = open(build_file_path(corresp_file), 'w')
             file.write(request.text)
             file.close()
             self.citec_list.append(corresp_file)
-            time.sleep(self.wait_time)
             return request.text
