@@ -22,7 +22,15 @@ seed_papers = {"cir":"RePEc:ecm:emetrp:v:53:y:1985:i:2:p:385-407",
                "brennan-schwartz-2":"RePEc:eee:jbfina:v:3:y:1979:i:2:p:133-155",
                "vasicek-fong":"RePEc:bla:jfinan:v:37:y:1982:i:2:p:339-48",
                "nelson-siegel":"RePEc:ucp:jnlbus:v:60:y:1987:i:4:p:473-89",
-               "longstaff-schwartz":"RePEc:bla:jfinan:v:47:y:1992:i:4:p:1259-82"}
+               "longstaff-schwartz":"RePEc:bla:jfinan:v:47:y:1992:i:4:p:1259-82",
+               "bgm":"RePEc:bla:mathfi:v:7:y:1997:i:2:p:127-155",
+               "sondermann":"RePEc:bla:jfinan:v:52:y:1997:i:1:p:409-30",
+               "jamshidian":"RePEc:spr:finsto:v:1:y:1997:i:4:p:293-330",
+               "cir2":"RePEc:ecm:emetrp:v:53:y:1985:i:2:p:363-84",
+               "hunt-kennedy":"RePEc:spr:finsto:v:4:y:2000:i:4:p:391-408",
+               "kim-wright":"RePEc:fip:fedgfe:2005-33",
+               "cochrane-piazzesi":"RePEc:aea:aecrev:v:95:y:2005:i:1:p:138-160",
+               "constantinides":"RePEc:oup:rfinst:v:5:y:1992:i:4:p:531-52"}
 
 seed_handles = list(seed_papers.values())
 
