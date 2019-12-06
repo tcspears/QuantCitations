@@ -104,9 +104,21 @@ def write_article(extracted_article, db_session):
             keyword_entry = db.Keyword(keyword=keyword)
         article_entry.keywords.append(keyword_entry)
 
-    logging.info("Adding " + str(article_entry) + " to database")
     db_session.add(article_entry)
     db_session.commit()
+    logging.info("Committed " + str(article_entry) + " to database")
+
+
+def build_ltree(citation_list):
+    return ".".join(list(map(str, citation_list)))
+
+
+def write_citation_chain(entry_id, citation_chain_list, db_session):
+    cite_chain = db.CitationChain(id_of_citing=entry_id, citation_chain=Ltree(
+        build_ltree(citation_chain_list)))
+    db_session.add(cite_chain)
+    db_session.commit()
+    logging.info("Committted " + str(cite_chain) + " to database with chain " + str(citation_chain_list))
 
 
 # Spiders RePEC and Citec from a list of seed papers
@@ -115,9 +127,6 @@ def repec_scraper(db_session,
                   seed_handles,
                   max_links=100,
                   persist_at=settings.CACHE_LOCATION):
-    def build_ltree(citation_list):
-        return ".".join(list(map(str, citation_list)))
-
     if not persist_at.endswith("/"):
         persist_at = persist_at + "/"
 
@@ -126,17 +135,17 @@ def repec_scraper(db_session,
 
     # Step 1: Check if articles db is empty. If it is, then we need to make sure that the
     # scraping queue is empty too.
-    article_count = db.latest_article_id(db_session)
-    articles_db_is_empty = article_count == 0
+    citation_chain_count = db_session.query(db.CitationChain).count()
+    citation_db_empty = citation_chain_count == 0
 
     # Clear the shelf and queue
-    if articles_db_is_empty:
-        logging.warning("Articles table is empty, so I'm clearing the repec_queue shelf")
+    if citation_db_empty:
+        logging.warning("Citations table is empty, so I'm clearing the repec_queue shelf")
         while not repec_queue.empty():
             repec_queue.get(timeout=0)
 
     # Initiate counter for article entries and link count
-    link_count = len(repec_queue) + article_count
+    link_count = len(repec_queue) + citation_chain_count
 
     # Add seed handles to the queue if they haven't been visited previously
     logging.info("Adding seed handles to queue...")
@@ -150,6 +159,7 @@ def repec_scraper(db_session,
     # Spider through the queue
     while not repec_queue.empty():
         current = repec_queue.get(timeout=0)
+        logging.info("Current queue length now: " + str(len(repec_queue)))
         existing_entry = db_session.query(db.Article).filter_by(handle=current.handle).scalar()
         if existing_entry is None:
             try:
@@ -159,8 +169,12 @@ def repec_scraper(db_session,
                 write_article(article_info, db_session)
                 latest_article_id = db.latest_article_id(db_session)
 
+                # Add current citation chain to db
+                updated_citation_chain = current.citation_chain + [latest_article_id]
+                write_citation_chain(latest_article_id, updated_citation_chain, db_session)
+
+                # If we are below max_links, then get citec cites and add them to the queue
                 if link_count < max_links:
-                    # If we are below max_links, then get citec cites and add them to the queue
                     logging.info("Getting cites for " + current.handle)
                     cites = get_citec_cites(cache, current.handle)
                     for handle in cites:
@@ -168,20 +182,12 @@ def repec_scraper(db_session,
                         # e.g., [1,2] -> [1,2,3].
                         to_put = ArticleInfo(handle, current.citation_chain + [latest_article_id])
                         repec_queue.put(to_put)
-                        logging.info("Current value of link_count : " + str(link_count))
                         link_count += 1
+                        logging.info("Current value of link_count : " + str(link_count))
                         if link_count > max_links:
                             break
                 else:
                     logging.info("No room left in queue; skipping cites for " + current.handle)
-
-                if len(current.citation_chain) != 0:
-                    logging.info("Adding citation chain for " + current.handle + " to database")
-                    cite_chain = db.CitationChain(id_of_citing=latest_article_id,
-                                                  citation_chain=Ltree(
-                                                      build_ltree(current.citation_chain + [latest_article_id])))
-                    db_session.add(cite_chain)
-                    db_session.commit()
 
             except AttributeError:
                 logging.warning("No RePeC data for " + current.handle)
@@ -192,18 +198,12 @@ def repec_scraper(db_session,
             except NoDataException:
                 logging.warning("CitEc data missing for " + current.handle)
 
-        # If the handle is already in the list of visited handles, then we need to add the current
-        # citation chain to the citations table but will skip adding the article. To do this, we need
-        # to query the database to get the id of the article itself
-
-        elif len(current.citation_chain) != 0:
-            logging.info("Article " + current.handle + " already exists. Adding an additional citation chain.")
-            cite_chain = db.CitationChain(id_of_citing=existing_entry.id,
-                                          citation_chain=Ltree(
-                                              build_ltree(current.citation_chain + [existing_entry.id])))
-            db_session.add(cite_chain)
-            db_session.commit()
-
         else:
-            logging.info(
-                "Article " + current.handle + " already exists, but citation chain is empty. So I'm skipping to the next.")
+            # If the handle is already in the database, then we need to add the citation chain again.
+            # However, we need to verify that the citation chain doesn't form a cycle, as this would lead
+            # the scraper to follow an endless loop.
+            updated_citation_chain = current.citation_chain + [existing_entry.id]
+            if existing_entry.id not in current.citation_chain:
+                write_citation_chain(existing_entry.id, updated_citation_chain, db_session)
+            else:
+                logging.warning("Potential cycle detected at" + str(updated_citation_chain) + " Skipping " + current.handle)
