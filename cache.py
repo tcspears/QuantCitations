@@ -5,6 +5,24 @@ import time
 import requests
 import settings
 import datetime
+import logging
+from retrying import retry
+
+def seconds_to_milliseconds(seconds):
+    return seconds*1000
+
+@retry(wait_exponential_multiplier=seconds_to_milliseconds(1), wait_exponential_max=seconds_to_milliseconds(settings.WAIT_BEFORE_TIMEOUT))
+def stubborn_request(url):
+    try:
+        output = requests.get(url,
+                              timeout=120,
+                              headers=settings.HEADERS)
+        logging.info("Request to " + url + " succeeded.")
+        return output
+    except Exception:
+        logging.warning("Requests threw an exception. Waiting before trying again...")
+        raise IOError
+
 
 class DataCache:
     last_repec_request_time = datetime.datetime.now()
@@ -58,9 +76,7 @@ class DataCache:
             return file.read()
         else:
             time.sleep(DataCache.get_repec_wait_time())
-            request = requests.get("https://ideas.repec.org/cgi-bin/h.cgi?h=" + handle,
-                                   timeout=settings.WAIT_BEFORE_TIMEOUT,
-                                   headers=settings.HEADERS)
+            request = stubborn_request("https://ideas.repec.org/cgi-bin/h.cgi?h=" + handle)
             DataCache.reset_repec_wait_time()
             if not os.path.exists(corresp_dir):
                 os.makedirs(corresp_dir)
@@ -86,9 +102,7 @@ class DataCache:
             return file.read()
         else:
             time.sleep(DataCache.get_citec_wait_time())
-            request = requests.get("http://citec.repec.org/api/citedby/" + handle + "/" + settings.CITEC_USERNAME,
-                                   timeout=settings.WAIT_BEFORE_TIMEOUT,
-                                   headers=settings.HEADERS)
+            request = stubborn_request("http://citec.repec.org/api/citedby/" + handle + "/" + settings.CITEC_USERNAME)
             DataCache.reset_citec_wait_time()
             if not os.path.exists(corresp_dir):
                 os.makedirs(corresp_dir)

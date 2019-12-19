@@ -8,14 +8,6 @@ import persistqueue
 import db
 import settings
 
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s : %(name)s : %(levelname)s : %(message)s',
-                    datefmt='%d-%b-%y %H:%M:%S',
-                    handlers=[
-                        logging.FileHandler("{0}/{1}.log".format(settings.LOG_PATH, settings.LOG_FILE)),
-                        logging.StreamHandler()
-                    ])
-
 
 class NoDataException(Exception):
     pass
