@@ -15,7 +15,7 @@ class NoDataException(Exception):
 
 def get_repec_data(cache, repec_handle):
     request = cache.request_repec(repec_handle)
-    html_output = BeautifulSoup(request, 'html.parser')
+    html_output = BeautifulSoup(request, 'lxml')
 
     # Extract article description JSON from HTML
     article_json = json.loads(html_output.find("script", {"type": "application/ld+json"}).text)
