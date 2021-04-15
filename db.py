@@ -1,6 +1,5 @@
 from sqlalchemy import Column, Integer, String, BigInteger, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.types import ARRAY
 from sqlalchemy.schema import ForeignKey, Table
 from sqlalchemy_utils import LtreeType
 from sqlalchemy import Index
@@ -36,7 +35,7 @@ class Venue(Base):
     )
 
     def __str__(self):
-        return 'Venue({})'.format(self.name)
+        return '{}'.format(self.name)
 
     def __repr__(self):
         return 'Venue({})'.format(self.name)
@@ -72,7 +71,7 @@ class Article(Base):
     )
 
     def __str__(self):
-        return 'Article({})'.format(self.handle)
+        return '{}'.format(self.handle)
 
     def __repr__(self):
         return 'Article({})'.format(self.handle)
@@ -90,10 +89,10 @@ class Keyword(Base):
     )
 
     def __str__(self):
-        return 'Keyword({})'.format(self.name)
+        return '{}'.format(self.keyword)
 
     def __repr__(self):
-        return 'Keyword({})'.format(self.name)
+        return 'Keyword({})'.format(self.keyword)
 
 
 class Author(Base):
@@ -108,7 +107,7 @@ class Author(Base):
     )
 
     def __str__(self):
-        return 'Author({})'.format(self.name)
+        return '{}'.format(self.name)
 
     def __repr__(self):
         return 'Author({})'.format(self.name)
