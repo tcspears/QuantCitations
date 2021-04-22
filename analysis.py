@@ -139,8 +139,7 @@ def shared_handles_percent(article_collections):
     return numerator/denominator
 
 
-# Faster implementation that off-loads much of the work to the SQL server
-def get_descendants(article, session_object, degree=None):
+def get_descendants(article, session_object, degree=(1,1)):
     """
     Create an ArticleCollection of the citation descendants of an article
     :param article: An Article object (returned by a lookup function)
@@ -150,9 +149,10 @@ def get_descendants(article, session_object, degree=None):
     """
     if degree is None:
         end_part = ".*"
+    if degree[0] == degree[1]:
+        end_part = ".*{" + str(degree[0]) + "}"
     else:
-        end_part = ".*{" + str(degree) + "}"
-
+        end_part = ".*{" + str(degree[0]) + "," + str(degree[1]) + "}"
     id = article.id
     citation_chain_query = "*." + str(id) + end_part
     sql_statement = text("select articles.id, articles.handle, articles.title, articles.year, "
@@ -166,9 +166,6 @@ def get_descendants(article, session_object, degree=None):
                          "left join keyword_article_association on articles.id = keyword_article_association.article_id "
                          "left join keywords on keyword_article_association.keyword_id = keywords.id "
                          "where citation_chain ~ :q group by articles.id, venues.name;").params(q=citation_chain_query)
-
-
-
     sql_output = session_object.execute(sql_statement)
     df = pd.DataFrame(sql_output, columns = ['ID', 'Handle', 'Title', 'Year', 'Authors', 'Venue', 'URL', 'Abstract', 'Keywords'])
     return ArticleCollection(df)
